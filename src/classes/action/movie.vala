@@ -80,13 +80,13 @@ namespace pdfpc {
          */
         public virtual void init_other(ActionMapping other, Poppler.Rectangle area,
                 PresentationController controller, Poppler.Document document,
-                string uri, bool autostart, bool loop, bool temp=false) {
+                string uri, bool autostart, bool loop, string ctype, bool temp=false) {
             other.init(area, controller, document);
             var movie = other as Movie;
             movie.loop = loop;
             movie.temp = temp ? uri.substring(7) : "";
             GLib.Idle.add( () => {
-                movie.establish_pipeline(uri);
+                movie.establish_pipeline(uri, ctype);
                 if (autostart)
                     movie.play();
                 return false;
@@ -128,12 +128,12 @@ namespace pdfpc {
             string uri = filename_to_uri(file, controller.get_pdf_url());
             bool uncertain;
             var ctype = GLib.ContentType.guess(uri, null, out uncertain);
-            if (!("video" in ctype))
+            if (!("video" in ctype) && !("audio" in ctype))
                 return null;
 
             var type = Type.from_instance(this);
             var new_obj = GLib.Object.new(type) as ActionMapping;
-            this.init_other(new_obj, mapping.area, controller, document, uri, autostart, loop);
+            this.init_other(new_obj, mapping.area, controller, document, uri, autostart, loop, ctype);
             return new_obj;
         }
 
@@ -217,14 +217,14 @@ namespace pdfpc {
 
             var type = Type.from_instance(this);
             var new_obj = GLib.Object.new(type) as ActionMapping;
-            this.init_other(new_obj, mapping.area, controller, document, uri, false, false, temp);
+            this.init_other(new_obj, mapping.area, controller, document, uri, false, false, "video", temp);
             return new_obj;
         }
 
         /**
          * Set up the gstreamer pipeline.
          */
-        protected void establish_pipeline(string uri) {
+        protected void establish_pipeline(string uri, string ctype) {
             var bin = new Gst.Bin("bin");
             var tee = Gst.ElementFactory.make("tee", "tee");
             bin.add_many(tee);
@@ -252,7 +252,9 @@ namespace pdfpc {
 
             this.pipeline = Gst.ElementFactory.make("playbin2", "playbin");
             this.pipeline.uri = uri;
-            this.pipeline.video_sink = bin;
+            if ("video" in ctype) {
+                this.pipeline.video_sink = bin;
+            }
             var bus = this.pipeline.get_bus();
             bus.add_signal_watch();
             bus.message["error"] += this.on_message;
@@ -425,8 +427,8 @@ namespace pdfpc {
          * Movie.init_other that attempts to justify this ugliness.
          */
         public override void init_other(ActionMapping other, Poppler.Rectangle area,
-                PresentationController controller, Poppler.Document document, string file, bool autostart, bool loop, bool temp=false) {
-            base.init_other(other, area, controller, document, file, autostart, loop, temp);
+                PresentationController controller, Poppler.Document document, string file, bool autostart, bool loop, string ctype, bool temp=false) {
+            base.init_other(other, area, controller, document, file, autostart, loop, ctype, temp);
             var movie = other as ControlledMovie;
             controller.main_view.motion_notify_event.connect(movie.on_motion);
             controller.main_view.button_release_event.connect(movie.on_button_release);
