@@ -154,7 +154,7 @@ namespace pdfpc {
          */
         public void init_movie(ActionMapping other, Poppler.Rectangle area,
                 PresentationController controller, Poppler.Document document,
-                string uri, bool autostart, bool loop, bool noprogress, bool noaudio, int start = 0, int stop = 0, bool temp=false) {
+                string uri, bool autostart, bool loop, bool noprogress, bool noaudio, int start = 0, int stop = 0, string ctype="video", bool temp=false) {
             other.init(area, controller, document);
             ControlledMovie movie = (ControlledMovie) other;
             movie.loop = loop;
@@ -165,7 +165,7 @@ namespace pdfpc {
             movie.temp = temp ? uri.substring(7) : "";
 
             GLib.Idle.add( () => {
-                movie.establish_pipeline(uri);
+                movie.establish_pipeline(uri, ctype);
 
                 // initial seek to set the starting point. *Cause the video to
                 // be displayed on the page*.
@@ -231,13 +231,13 @@ namespace pdfpc {
             string uri = filename_to_uri(file, controller.get_pdf_fname());
             bool uncertain;
             string ctype = GLib.ContentType.guess(uri, null, out uncertain);
-            if (!("video" in ctype)) {
+            if (!("video" in ctype) && !("audio" in ctype)) {
                 return null;
             }
 
             Type type = Type.from_instance(this);
             ActionMapping new_obj = (ActionMapping) GLib.Object.new(type);
-            this.init_movie(new_obj, mapping.area, controller, document, uri, autostart, loop, noprogress, noaudio, start, stop);
+            this.init_movie(new_obj, mapping.area, controller, document, uri, autostart, loop, noprogress, noaudio, start, stop, ctype);
             return new_obj;
         }
 
@@ -331,7 +331,7 @@ namespace pdfpc {
 
             Type type = Type.from_instance(this);
             ActionMapping new_obj = (ActionMapping) GLib.Object.new(type);
-            this.init_movie(new_obj, mapping.area, controller, document, uri, false, loop, noprogress, false, 0, 0, temp);
+            this.init_movie(new_obj, mapping.area, controller, document, uri, false, loop, noprogress, false, 0, 0, "video", temp);
             return new_obj;
         }
 
@@ -579,7 +579,7 @@ namespace pdfpc {
         /**
          * Set up the gstreamer pipeline.
          */
-        protected void establish_pipeline(string uri) {
+        protected void establish_pipeline(string uri, string ctype) {
             Gst.Bin bin = new Gst.Bin("bin");
             Gst.Element tee = Gst.ElementFactory.make("tee", "tee");
             bin.add_many(tee);
@@ -626,8 +626,10 @@ namespace pdfpc {
                 }
 
                 Gst.Element sink = Gst.ElementFactory.make("gtksink", @"sink$n");
-                Gtk.Widget video_area;
-                sink.get("widget", out video_area);
+                Gtk.Widget video_area = null;
+                if ("video" in ctype) {
+                    sink.get("widget", out video_area);
+                }
                 Gst.Element queue = Gst.ElementFactory.make("queue", @"queue$n");
                 bin.add_many(queue, sink);
                 tee.link(queue);
@@ -635,21 +637,25 @@ namespace pdfpc {
                     Gst.Element ad_element = this.add_video_control(queue, bin, conf.rect, largest_rect);
                     ad_element.link(sink);
 
-                    video_area.add_events(
-                          Gdk.EventMask.BUTTON_PRESS_MASK
-                        | Gdk.EventMask.BUTTON_RELEASE_MASK
-                        | Gdk.EventMask.POINTER_MOTION_MASK
-                    );
-                    video_area.motion_notify_event.connect(this.on_motion);
-                    video_area.button_press_event.connect(this.on_button_press);
-                    video_area.button_release_event.connect(this.on_button_release);
+                    if ("video" in ctype) {
+                        video_area.add_events(
+                              Gdk.EventMask.BUTTON_PRESS_MASK
+                            | Gdk.EventMask.BUTTON_RELEASE_MASK
+                            | Gdk.EventMask.POINTER_MOTION_MASK
+                        );
+                        video_area.motion_notify_event.connect(this.on_motion);
+                        video_area.button_press_event.connect(this.on_button_press);
+                        video_area.button_release_event.connect(this.on_button_release);
+                    }
                 } else {
                     queue.link(sink);
                 }
                 sink.set("force_aspect_ratio", false);
 
-                conf.window.video_surface.add_video(video_area, conf.rect);
-                this.sinks.add(video_area);
+                if ("video" in ctype) {
+                    conf.window.video_surface.add_video(video_area, conf.rect);
+                    this.sinks.add(video_area);
+                }
 
                 n++;
             }
@@ -657,7 +663,9 @@ namespace pdfpc {
             this.pipeline = Gst.ElementFactory.make("playbin", "playbin");
             this.pipeline.set("uri", uri);
             this.pipeline.set("force_aspect_ratio", false);  // Else overrides last overlay
-            this.pipeline.set("video_sink", bin);
+            if ("video" in ctype) {
+                this.pipeline.set("video_sink", bin);
+            }
             this.pipeline.set("mute", this.noaudio);
             Gst.Bus bus = this.pipeline.get_bus();
             bus.add_signal_watch();
